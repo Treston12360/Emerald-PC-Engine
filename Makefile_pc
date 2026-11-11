@@ -122,7 +122,10 @@ CPPFLAGS := -std=gnu99 -iquote include -iquote $(GFLIB_SUBDIR) -Wno-trigraphs -D
 ifeq ($(NATIVE_LINUX),1)
 CPPFLAGS += $(HOST_WIDTH_CFLAGS) -D NATIVE_LINUX -D LINUX64=$(LINUX64) $(shell pkg-config --cflags sdl2 SDL2_image)
 else ifeq ($(WINDOWS64),1)
-CPPFLAGS += -D WINDOWS64=1 -D LINUX64=1 \
+# Reuse the native content adapters on both 64-bit desktop platforms.
+# Historically named NATIVE_LINUX, this feature flag currently selects
+# pack-backed content accessors, not the Windows/Linux system API.
+CPPFLAGS += -D WINDOWS64=1 -D LINUX64=1 -D NATIVE_LINUX \
 	-I$(SDL_DIR)/include -I$(SDL_DIR)/include/SDL2 \
 	-I$(SDL_IMAGE_DIR)/include -I$(SDL_IMAGE_DIR)/include/SDL2
 else
