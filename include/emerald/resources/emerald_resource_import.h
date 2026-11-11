@@ -175,6 +175,12 @@ struct EmeraldImportInput
     size_t manifestCount;
     const struct EmeraldImportSource *catalogs;
     size_t catalogCount;
+
+    /* Optional for the standalone ROM-free test harnesses. The native desktop
+     * release always supplies a numerical-only provenance index generated
+     * from qualified ROM offsets. Bundled resources are reconstructed from
+     * the user's validated ROM, not loaded from distributed .bin payloads. */
+    const char *romProvenancePath;
 };
 
 /* Phase 1: strict ROM validation against input->profile. */

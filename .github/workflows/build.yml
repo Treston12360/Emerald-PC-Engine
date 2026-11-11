@@ -1,69 +1,148 @@
-name: CI
+name: Native Emerald PC CI
 
+# Compiles the original source-port engine, not copyrighted ROM content.
 on:
-  push:
-    branches: [ master ]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    env:
-      GAME_VERSION: EMERALD
-      GAME_REVISION: 0
-      GAME_LANGUAGE: ENGLISH
-      MODERN: 0
-      COMPARE: 1
+  core-tests:
+    name: ROM-free portable resource tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
-
-      - name: Checkout syms
-        if: ${{ github.event_name == 'push' }}
-        uses: actions/checkout@master
-        with:
-          path: symbols
-          ref: symbols
-
-      - name: Checkout agbcc
-        uses: actions/checkout@master
-        with:
-          path: agbcc
-          repository: pret/agbcc
-
-      - name: Install binutils
+      - uses: actions/checkout@v4
+      - name: Install test toolchain
         run: |
-          sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi libpng-dev
-        # build-essential and git are already installed
-        # gcc-arm-none-eabi is only needed for the modern build
-        # as an alternative to dkP
-
-      - name: Install agbcc
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential python3
+      - name: Run portable compatibility suites
         run: |
-          ./build.sh
-          ./install.sh ../
-        working-directory: agbcc
+          bash tests/run_emerald_resource_lz.sh
+          bash tests/run_emerald_rom_base_provider.sh
 
-      - name: Compare
-        run: make -j${nproc} all syms
-
-      - name: Modern
-        env:
-          MODERN: 1
-          COMPARE: 0
-        run: make -j${nproc} all
-
-      - name: Move symfiles
-        if: ${{ github.event_name == 'push' }}
+  linux-x64:
+    name: Linux x64 native package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native toolchain and SDL2
         run: |
-          cp -v *.sym symbols/
-          echo "SYMBOLS_COMMIT_MSG=$( git log --format=%s ${GITHUB_SHA} )" >> $GITHUB_ENV
-
-      - name: Update symfiles
-        if: ${{ github.event_name == 'push' }}
-        uses: EndBug/add-and-commit@v7
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils pkg-config libsdl2-dev libsdl2-image-dev \
+            libpng-dev python3 python3-pil curl tar gzip zip file
+      - name: Compile and package native Linux
+        run: make -f Makefile_pc release-linux -j2
+      - name: Verify ELF64 and package
+        run: |
+          test -s pokeemerald-linux64
+          file pokeemerald-linux64
+          readelf -h pokeemerald-linux64 | grep -Eq 'Class:[[:space:]]+ELF64'
+          test -s release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          python3 tools/windows64/check_import_metadata_archive.py . release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          tar -tzf release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz | head -30
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
         with:
-          branch: symbols
-          cwd: "./symbols"
-          add: "*.sym"
-          message: ${{ env.SYMBOLS_COMMIT_MSG }}
+          name: vanilla-emerald-linux-x64
+          path: release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-x64:
+    name: Windows x64 native package (cross-compiled)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 and asset toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils pkg-config gcc-mingw-w64-x86-64 \
+            binutils-mingw-w64-x86-64 libpng-dev python3 python3-pil \
+            curl tar gzip zip file
+      - name: Compile and package native Windows
+        run: make -f Makefile_pc release-windows -j2
+      - name: Verify x64 executable and ZIP
+        run: |
+          test -s PokemonEmeraldRecomp.exe
+          file PokemonEmeraldRecomp.exe
+          x86_64-w64-mingw32-objdump -f PokemonEmeraldRecomp.exe | grep -q 'pei-x86-64'
+          python3 tools/windows64/verify_pe_layout.py PokemonEmeraldRecomp.exe
+          test -s release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          python3 tools/windows64/check_import_metadata_archive.py . release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          unzip -l release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip | tail -20
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanilla-emerald-windows-x64
+          path: release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+
+  windows-smoke:
+    name: Windows x64 loader smoke test (real Windows runner)
+    needs: windows-x64
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Retrieve compiled Windows release ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: vanilla-emerald-windows-x64
+          path: artifact
+      - name: Extract release
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path artifact -Filter '*.zip' | Select-Object -First 1
+          if (-not $zip) { throw "No Windows release ZIP uploaded" }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath extracted
+          $exe = Get-ChildItem -Path extracted -Recurse -Filter 'pokeemerald-recomp.exe' | Select-Object -First 1
+          if (-not $exe) { throw "No Windows executable in release" }
+          Write-Host "Found executable: $($exe.FullName)"
+          $manifest = Join-Path $exe.DirectoryName 'resources/extraction/emerald/bpee01/manifest.production.toml'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            throw "Release is missing the extraction manifest required for ROM import"
+          }
+          $provenance = Join-Path $exe.DirectoryName 'resources/extraction/emerald/bpee01/rom-provenance.rbi'
+          if (-not (Test-Path -LiteralPath $provenance)) {
+            throw "Release is missing ROM-only bundle provenance required for import"
+          }
+          $provenanceBytes = [System.IO.File]::ReadAllBytes($provenance)
+          if ($provenanceBytes.Length -lt 12 -or
+              [Text.Encoding]::ASCII.GetString($provenanceBytes, 0, 8) -ne 'EMRPROV1') {
+            throw "ROM provenance index is missing its expected version signature"
+          }
+          Write-Host "Verified bundled ROM-import metadata and provenance beside executable"
+      - name: Start executable and verify utility-mode exit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem -Path extracted -Recurse -Filter 'pokeemerald-recomp.exe' | Select-Object -First 1
+          if (-not $exe) { throw "No Windows executable in release" }
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'emerald-smoke-data'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          # This mode initializes SDL and storage, prints a path, and returns 0.
+          # It does not require or distribute a commercial ROM.
+          # The executable has the Windows GUI subsystem. PowerShell's & operator
+          # doesn't reliably wait for GUI processes or set LASTEXITCODE.
+          $process = Start-Process -FilePath $exe.FullName -PassThru -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden -ArgumentList @('--data-root', $dataRoot, '--print-data-path')
+          if (-not $process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'Windows native startup did not exit within 30 seconds'
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Windows native startup returned exit code $($process.ExitCode)"
+          }
+          Write-Host 'PASS: Windows x64 executable loaded and cleanly exited.'

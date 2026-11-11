@@ -92,7 +92,11 @@ HOST_WIDTH_CFLAGS := -m32
 endif
 
 HOST_64BIT := $(if $(filter 1,$(LINUX64) $(WINDOWS64)),1,0)
-ASFLAGS := $(HOST_ASFLAGS) --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1 --defsym LINUX64=$(HOST_64BIT) --defsym NATIVE_LINUX=$(NATIVE_LINUX)
+# R15's native content layout must be identical for Linux x64 and Windows x64.
+# The historical NATIVE_LINUX assembler flag represents pack-backed content,
+# not POSIX platform APIs. Keep the GBA and Linux 32-bit paths unchanged.
+NATIVE_CONTENT_BUILD := $(if $(filter 1,$(NATIVE_LINUX) $(WINDOWS64)),1,0)
+ASFLAGS := $(HOST_ASFLAGS) --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1 --defsym LINUX64=$(HOST_64BIT) --defsym NATIVE_LINUX=$(NATIVE_CONTENT_BUILD)
 
 ifneq ($(filter 1,$(NATIVE_LINUX) $(WINDOWS64)),)
 CC1 := $(CC)
@@ -122,7 +126,10 @@ CPPFLAGS := -std=gnu99 -iquote include -iquote $(GFLIB_SUBDIR) -Wno-trigraphs -D
 ifeq ($(NATIVE_LINUX),1)
 CPPFLAGS += $(HOST_WIDTH_CFLAGS) -D NATIVE_LINUX -D LINUX64=$(LINUX64) $(shell pkg-config --cflags sdl2 SDL2_image)
 else ifeq ($(WINDOWS64),1)
-CPPFLAGS += -D WINDOWS64=1 -D LINUX64=1 \
+# Reuse the native content adapters on both 64-bit desktop platforms.
+# Historically named NATIVE_LINUX, this feature flag currently selects
+# pack-backed content accessors, not the Windows/Linux system API.
+CPPFLAGS += -D WINDOWS64=1 -D LINUX64=1 -D NATIVE_LINUX \
 	-I$(SDL_DIR)/include -I$(SDL_DIR)/include/SDL2 \
 	-I$(SDL_IMAGE_DIR)/include -I$(SDL_IMAGE_DIR)/include/SDL2
 else
@@ -248,7 +255,7 @@ C_SRCS := $(foreach src,$(C_SRCS_IN),$(if $(findstring .inc.c,$(src)),,$(src)))
 # migrated leaf symbols and bytes never enter the native object/link graph
 # (see src/data/graphics/trainers_front_payload.c). The GBA Makefile
 # auto-collects them via its own wildcard.
-ifeq ($(NATIVE_LINUX),1)
+ifeq ($(NATIVE_CONTENT_BUILD),1)
 # R13-G5: the script compat seam and its generated inventory are
 # production-linked (the live field-script cutover); the GBA payload
 # objects remain filtered out as before.
@@ -294,7 +301,7 @@ MID_OBJS := $(patsubst $(MID_SUBDIR)/%.mid,$(MID_BUILDDIR)/%.o,$(MID_SRCS))
 # assembly rules in audio_rules.mk still generate the midi-derived objects
 # for them; for the linux64 link these lists are simply empty, so no rule
 # fires and no payload object is linked.
-ifeq ($(NATIVE_LINUX)-$(LINUX64),1-1)
+ifeq ($(NATIVE_CONTENT_BUILD)-$(HOST_64BIT),1-1)
 SONG_OBJS :=
 MID_OBJS :=
 
@@ -525,7 +532,13 @@ $(ELF): $(OBJ_DIR)/ld_script.ld $(OBJS)
 	cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ld_script.ld -o ../../$@ $(OBJS_REL) $(LIB)
 	$(FIX) $@ -t"$(TITLE)" -c$(GAME_CODE) -m$(MAKER_CODE) -r$(REVISION) --silent
 
-$(ROM): $(OBJS) ld_script_native.ld
+ifeq ($(WINDOWS64),1)
+NATIVE_LINK_SCRIPT := ld_script_windows64.ld
+else
+NATIVE_LINK_SCRIPT := ld_script_native.ld
+endif
+
+$(ROM): $(OBJS) $(NATIVE_LINK_SCRIPT)
 ifeq ($(NATIVE_LINUX),1)
 ifeq ($(DINFO),1)
 	# -rdynamic (--export-dynamic) exports the full symtab to .dynsym so
@@ -536,7 +549,7 @@ else
 endif
 else ifeq ($(WINDOWS64),1)
 	$(CC) $(CFLAGS) -mwindows -static-libgcc \
-		-Wl,--demangle,-T,ld_script_native.ld,--image-base,0x00400000,--disable-dynamicbase,--disable-reloc-section \
+		-Wl,--demangle,-T,ld_script_windows64.ld,--image-base,0x00400000,--disable-dynamicbase,--disable-reloc-section \
 		$(OBJS) $(PLATFORM_INCLUDES) -o $@
 else
 	$(CC) $(CFLAGS) -Wl,--demangle $(OBJS) -static-libgcc -L$(SDL_DIR)/lib $(PLATFORM_INCLUDES) -lwinmm -lxinput -o $@

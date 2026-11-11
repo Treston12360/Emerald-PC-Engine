@@ -52,11 +52,13 @@
 
 #define EMERALD_PACK_ASSET "games/emerald/base/emerald-bpee01-v1.rpack"
 #define EMERALD_PACK_FILE  "emerald-bpee01-v1.rpack"
+#define EMERALD_ROM_PROVENANCE_ASSET "resources/extraction/emerald/bpee01/rom-provenance.rbi"
 
-/* The merged production manifest + catalog set (identical to
- * tools/gen3_resources/pack_build/build_d1_pack.sh). */
-#define EMERALD_IMPORT_MANIFEST_COUNT 10u
-#define EMERALD_IMPORT_CATALOG_COUNT  10u
+/* Canonical R15 resource family inventory; keep synchronized with
+ * tools/gen3_resources/pack_build/build_d1_pack.sh. The earlier D1 list
+ * omitted script, battle, animation, UI and other active resource families. */
+#define EMERALD_IMPORT_MANIFEST_COUNT 18u
+#define EMERALD_IMPORT_CATALOG_COUNT  18u
 
 static const char *const sImportManifests[EMERALD_IMPORT_MANIFEST_COUNT] =
 {
@@ -70,6 +72,14 @@ static const char *const sImportManifests[EMERALD_IMPORT_MANIFEST_COUNT] =
     "resources/extraction/emerald/bpee01/multiboot/manifest.production.toml",
     "resources/extraction/emerald/bpee01/text/manifest.production.toml",
     "resources/extraction/emerald/bpee01/gameplay/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/script/modules/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/battle/modules/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/battle_anim_gfx/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/item_icon/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/wallpaper/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/weather/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/ui/manifest.production.toml",
+    "resources/extraction/emerald/bpee01/easy_chat/manifest.production.toml",
 };
 
 static const char *const sImportCatalogs[EMERALD_IMPORT_CATALOG_COUNT] =
@@ -84,6 +94,14 @@ static const char *const sImportCatalogs[EMERALD_IMPORT_CATALOG_COUNT] =
     "resources/extraction/emerald/bpee01/multiboot/catalog.generated.toml",
     "resources/extraction/emerald/bpee01/text/catalog.generated.toml",
     "resources/extraction/emerald/bpee01/gameplay/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/script/modules/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/battle/modules/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/battle_anim_gfx/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/item_icon/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/wallpaper/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/weather/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/ui/catalog.generated.toml",
+    "resources/extraction/emerald/bpee01/easy_chat/catalog.generated.toml",
 };
 
 HOST_DATA static char sLastError[192];
@@ -261,6 +279,12 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
     char packPath[CONTENT_PATH_MAX];
     struct EmeraldImportSource manifests[EMERALD_IMPORT_MANIFEST_COUNT];
     struct EmeraldImportSource catalogs[EMERALD_IMPORT_CATALOG_COUNT];
+    /* Each import path is owned by the running application, not the shell's
+     * working directory. SDL_GetBasePath resolves beside the executable,
+     * including when Windows starts us from a shortcut or another folder. */
+    char manifestPaths[EMERALD_IMPORT_MANIFEST_COUNT][CONTENT_PATH_MAX];
+    char catalogPaths[EMERALD_IMPORT_CATALOG_COUNT][CONTENT_PATH_MAX];
+    char romProvenancePath[CONTENT_PATH_MAX];
     struct EmeraldImportInput input;
     struct EmeraldImportReport report;
     enum EmeraldResourceImportError importError;
@@ -289,10 +313,42 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
 
     memset(manifests, 0, sizeof(manifests));
     for (i = 0u; i < EMERALD_IMPORT_MANIFEST_COUNT; i++)
-        manifests[i].path = sImportManifests[i];
+    {
+        if (!Platform_AssetGetPath(sImportManifests[i], manifestPaths[i],
+                                   sizeof(manifestPaths[i])))
+        {
+            info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+            snprintf(info->error, sizeof(info->error),
+                     "Game-data extraction metadata is missing. Reinstall this release.");
+            SetError("%s", info->error);
+            return info->result;
+        }
+        manifests[i].path = manifestPaths[i];
+    }
     memset(catalogs, 0, sizeof(catalogs));
     for (i = 0u; i < EMERALD_IMPORT_CATALOG_COUNT; i++)
-        catalogs[i].path = sImportCatalogs[i];
+    {
+        if (!Platform_AssetGetPath(sImportCatalogs[i], catalogPaths[i],
+                                   sizeof(catalogPaths[i])))
+        {
+            info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+            snprintf(info->error, sizeof(info->error),
+                     "Game-data catalogs are missing. Reinstall this release.");
+            SetError("%s", info->error);
+            return info->result;
+        }
+        catalogs[i].path = catalogPaths[i];
+    }
+
+    if (!Platform_AssetGetPath(EMERALD_ROM_PROVENANCE_ASSET,
+                               romProvenancePath, sizeof(romProvenancePath)))
+    {
+        info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+        snprintf(info->error, sizeof(info->error),
+                 "ROM provenance metadata is missing. Reinstall this release.");
+        SetError("%s", info->error);
+        return info->result;
+    }
 
     memset(&input, 0, sizeof(input));
     input.profile = EmeraldRomProfile_Bpee01Rev0();
@@ -301,6 +357,7 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
     input.manifestCount = EMERALD_IMPORT_MANIFEST_COUNT;
     input.catalogs = catalogs;
     input.catalogCount = EMERALD_IMPORT_CATALOG_COUNT;
+    input.romProvenancePath = romProvenancePath;
     input.destinationPath = packPath;
 
     /* Classify a wrong ROM first (the sdl2 CLI prints the detected vs

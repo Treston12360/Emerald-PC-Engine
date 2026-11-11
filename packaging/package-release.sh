@@ -32,6 +32,17 @@ copy_common_files() {
     install -m 0644 "$readme" "$stage/README.md"
     install -m 0644 "$repo_root/LICENSE" "$stage/LICENSE"
     install -m 0644 "$repo_root/images/rayquaza.png" "$stage/images/rayquaza.png"
+
+    # The launcher imports a locally supplied retail ROM into an .rpack.
+    # Its source-defined manifests/catalogs are public TOML metadata; the old
+    # release omitted them, causing "cannot open extraction manifest (errno 2)".
+    # This never copies ROM bytes, extracted assets, .rpack or user saves.
+    python3 "$repo_root/tools/windows64/package_import_metadata.py" "$repo_root" "$stage"
+
+    # This sidecar contains offsets and lengths only. All GBA text/script/
+    # battle bytes are rebuilt from the player's legally supplied ROM.
+    python3 "$repo_root/tools/windows64/generate_rom_provenance.py" \
+        "$repo_root" "$stage/resources/extraction/emerald/bpee01/rom-provenance.rbi"
 }
 
 audit_stage() {
