@@ -1,69 +1,90 @@
-name: CI
+name: Native Emerald PC CI
 
+# Compiles the original source-port engine, not copyrighted ROM content.
 on:
   push:
-    branches: [ master ]
+    branches: ['**']
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    env:
-      GAME_VERSION: EMERALD
-      GAME_REVISION: 0
-      GAME_LANGUAGE: ENGLISH
-      MODERN: 0
-      COMPARE: 1
+  core-tests:
+    name: ROM-free portable resource tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@master
-
-      - name: Checkout syms
-        if: ${{ github.event_name == 'push' }}
-        uses: actions/checkout@master
-        with:
-          path: symbols
-          ref: symbols
-
-      - name: Checkout agbcc
-        uses: actions/checkout@master
-        with:
-          path: agbcc
-          repository: pret/agbcc
-
-      - name: Install binutils
+      - uses: actions/checkout@v4
+      - name: Install test toolchain
         run: |
-          sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi libpng-dev
-        # build-essential and git are already installed
-        # gcc-arm-none-eabi is only needed for the modern build
-        # as an alternative to dkP
-
-      - name: Install agbcc
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential python3
+      - name: Run portable compatibility suites
         run: |
-          ./build.sh
-          ./install.sh ../
-        working-directory: agbcc
+          bash tests/run_emerald_resource_lz.sh
+          bash tests/run_emerald_rom_base_provider.sh
 
-      - name: Compare
-        run: make -j${nproc} all syms
-
-      - name: Modern
-        env:
-          MODERN: 1
-          COMPARE: 0
-        run: make -j${nproc} all
-
-      - name: Move symfiles
-        if: ${{ github.event_name == 'push' }}
+  linux-x64:
+    name: Linux x64 native package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native toolchain and SDL2
         run: |
-          cp -v *.sym symbols/
-          echo "SYMBOLS_COMMIT_MSG=$( git log --format=%s ${GITHUB_SHA} )" >> $GITHUB_ENV
-
-      - name: Update symfiles
-        if: ${{ github.event_name == 'push' }}
-        uses: EndBug/add-and-commit@v7
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils pkg-config libsdl2-dev libsdl2-image-dev \
+            libpng-dev python3 python3-pil curl tar gzip zip file
+      - name: Compile and package native Linux
+        run: make -f Makefile_pc release-linux -j2
+      - name: Verify ELF64 and package
+        run: |
+          test -s pokeemerald-linux64
+          file pokeemerald-linux64
+          readelf -h pokeemerald-linux64 | grep -Eq 'Class:[[:space:]]+ELF64'
+          test -s release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          tar -tzf release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz | head -30
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v4
         with:
-          branch: symbols
-          cwd: "./symbols"
-          add: "*.sym"
-          message: ${{ env.SYMBOLS_COMMIT_MSG }}
+          name: vanilla-emerald-linux-x64
+          path: release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-x64:
+    name: Windows x64 native package (cross-compiled)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 and asset toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential binutils pkg-config gcc-mingw-w64-x86-64 \
+            binutils-mingw-w64-x86-64 libpng-dev python3 python3-pil \
+            curl tar gzip zip file
+      - name: Compile and package native Windows
+        run: make -f Makefile_pc release-windows -j2
+      - name: Verify x64 executable and ZIP
+        run: |
+          test -s PokemonEmeraldRecomp.exe
+          file PokemonEmeraldRecomp.exe
+          x86_64-w64-mingw32-objdump -f PokemonEmeraldRecomp.exe | grep -q 'pei-x86-64'
+          test -s release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          unzip -l release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip | tail -20
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanilla-emerald-windows-x64
+          path: release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
