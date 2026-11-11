@@ -849,22 +849,22 @@ static bool CatalogAddAll(const struct ImportCatalogView *catalog,
  * encoded and canonical SHA-256 hashes remain the final authority.
  *
  * Version 1 layout, little-endian:
- *   "EMRPROV1" + u32 entryCount
- *   each entry: u16 pathLength, u8 kind, u16 segmentCount, u32 payloadSize,
+ *   "EMRPROV1" + uint32_t entryCount
+ *   each entry: uint16_t pathLength, uint8_t kind, uint16_t segmentCount, uint32_t payloadSize,
  *               path bytes including trailing NUL, segmentCount x
- *               {u32 romOffset, u32 payloadOffset, u32 length}
- *   kind 1 (text) additionally synthesizes {u32 count, u32 dataOffset,
- *               u32 offsets[count]} before the raw ROM label slices.
+ *               {uint32_t romOffset, uint32_t payloadOffset, uint32_t length}
+ *   kind 1 (text) additionally synthesizes {uint32_t count, uint32_t dataOffset,
+ *               uint32_t offsets[count]} before the raw ROM label slices.
  * Entries are strictly ordered by source_artifact path, with no gaps in the
  * reconstructed payload. No filesystem fallback when this index is active.
  */
 struct RomSourceEntry
 {
     const char *path;  /* borrowed from RomSourceIndex.loaded.data */
-    const u8 *segments;
-    u32 payloadSize;
-    u16 segmentCount;
-    u8 kind;
+    const uint8_t *segments;
+    uint32_t payloadSize;
+    uint16_t segmentCount;
+    uint8_t kind;
 };
 
 struct RomSourceIndex
@@ -874,30 +874,30 @@ struct RomSourceIndex
     size_t count;
 };
 
-static u16 ReadProvU16(const u8 *src)
+static uint16_t ReadProvU16(const uint8_t *src)
 {
-    return (u16)src[0] | (u16)((u16)src[1] << 8);
+    return (uint16_t)src[0] | (uint16_t)((uint16_t)src[1] << 8);
 }
 
-static u32 ReadProvU32(const u8 *src)
+static uint32_t ReadProvU32(const uint8_t *src)
 {
-    return (u32)src[0] | ((u32)src[1] << 8) | ((u32)src[2] << 16) | ((u32)src[3] << 24);
+    return (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
 }
 
-static void WriteProvU32(u8 *dst, u32 value)
+static void WriteProvU32(uint8_t *dst, uint32_t value)
 {
-    dst[0] = (u8)value;
-    dst[1] = (u8)(value >> 8);
-    dst[2] = (u8)(value >> 16);
-    dst[3] = (u8)(value >> 24);
+    dst[0] = (uint8_t)value;
+    dst[1] = (uint8_t)(value >> 8);
+    dst[2] = (uint8_t)(value >> 16);
+    dst[3] = (uint8_t)(value >> 24);
 }
 
 static bool ParseRomSourceIndex(struct RomSourceIndex *index)
 {
-    const u8 *data = index->loaded.data;
+    const uint8_t *data = index->loaded.data;
     size_t length = index->loaded.size;
     size_t offset = 12;
-    u32 count;
+    uint32_t count;
     size_t i;
 
     if (length < 12 || memcmp(data, "EMRPROV1", 8) != 0)
@@ -911,8 +911,8 @@ static bool ParseRomSourceIndex(struct RomSourceIndex *index)
     index->count = count;
     for (i = 0; i < (size_t)count; i++)
     {
-        u16 pathLength;
-        u16 segments;
+        uint16_t pathLength;
+        uint16_t segments;
         size_t segmentBytes;
         struct RomSourceEntry *entry = &index->entries[i];
 
@@ -964,13 +964,13 @@ static const struct RomSourceEntry *FindRomSource(
 
 static enum EmeraldResourceImportError BuildRomSourcePayload(
     const struct RomSourceIndex *index, const struct ImportManifestRecord *record,
-    size_t recordIndex, const u8 *romData, size_t romSize, u8 **outData,
+    size_t recordIndex, const uint8_t *romData, size_t romSize, uint8_t **outData,
     size_t *outSize, struct EmeraldImportReport *report)
 {
     const struct RomSourceEntry *entry = FindRomSource(index, record->sourceArtifact);
     size_t cursor;
     size_t i;
-    u8 *bytes;
+    uint8_t *bytes;
 
     *outData = NULL;
     *outSize = 0;
@@ -993,14 +993,14 @@ static enum EmeraldResourceImportError BuildRomSourcePayload(
     if (entry->kind == 1)
     {
         WriteProvU32(bytes, entry->segmentCount);
-        WriteProvU32(bytes + 4, (u32)cursor);
+        WriteProvU32(bytes + 4, (uint32_t)cursor);
     }
     for (i = 0; i < entry->segmentCount; i++)
     {
-        const u8 *segment = entry->segments + i * 12u;
-        u32 romOffset = ReadProvU32(segment);
-        u32 payloadOffset = ReadProvU32(segment + 4);
-        u32 length = ReadProvU32(segment + 8);
+        const uint8_t *segment = entry->segments + i * 12u;
+        uint32_t romOffset = ReadProvU32(segment);
+        uint32_t payloadOffset = ReadProvU32(segment + 4);
+        uint32_t length = ReadProvU32(segment + 8);
         if ((size_t)romOffset > romSize
          || length == 0 || (size_t)length > romSize - romOffset
          || payloadOffset != cursor
