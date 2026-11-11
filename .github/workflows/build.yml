@@ -2,8 +2,6 @@ name: Native Emerald PC CI
 
 # Compiles the original source-port engine, not copyrighted ROM content.
 on:
-  push:
-    branches: ['**']
   pull_request:
   workflow_dispatch:
 
