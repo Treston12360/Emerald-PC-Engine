@@ -1,13 +1,10 @@
 #include "global.h"
 // BIOS function implementations are based on the VBA-M source code.
 
-// Native-only diagnostic support for deterministic crash reporting. Excluded
-// from Windows and GBA (MODERN=0) builds: the GBA Makefile drops all of
-// src/platform/*.c, and NATIVE_LINUX is only defined for the Linux desktop
-// target. <stdlib.h> can't be included here (global.h defines abs() as a
-// macro), so abort() is declared manually per the project's existing idiom
-// (see src/platform/host_memory.c).
-#if defined(NATIVE_LINUX)
+// POSIX backtrace diagnostics are Linux-specific. Windows64 also enables
+// NATIVE_LINUX for the shared pack-backed content adapters, but MinGW has
+// neither execinfo.h nor backtrace_symbols_fd. Keep the diagnostic on Linux.
+#if defined(NATIVE_LINUX) && defined(__linux__)
 #include <execinfo.h>
 #include <unistd.h>
 extern void abort(void);
@@ -212,7 +209,7 @@ fail:
 
 void LZ77UnCompWram(const u32 *src, void *dst)
 {
-#if defined(NATIVE_LINUX)
+#if defined(NATIVE_LINUX) && defined(__linux__)
     if (src == NULL)
     {
         void *frames[64];
