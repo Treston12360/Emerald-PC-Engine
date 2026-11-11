@@ -80,8 +80,13 @@
 #include "gen3/resources/resource_pack.h"
 #include "gen3/resources/sha256.h"
 
-#include <time.h>   /* clock_gettime (R12-E §8 perf window) */
+#include <time.h>   /* POSIX clock_gettime (R12-E §8 perf window) */
 #include <unistd.h> /* mkstemp/write/close/unlink (damaged-pack fixture) */
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h> /* QueryPerformanceCounter for the Windows scenario perf gate */
+#endif
 
 extern void RunMixerFrame(void);
 extern void m4aSoundVSync(void);
@@ -1227,21 +1232,44 @@ int NativeAudioScenarioTest(bool32 runCanary, u64 perfBaselineNs)
 
         for (batch = 0u; batch < PERF_WINDOW_BATCHES; batch++)
         {
+#ifdef _WIN32
+            LARGE_INTEGER t0, t1, frequency;
+#else
             struct timespec t0, t1;
+#endif
             uint64_t ns;
             u32 frame;
 
             ScenarioReset();
             m4aSongNumStart(359); /* mus_route101, the representative BGM */
+#ifdef _WIN32
+            QueryPerformanceFrequency(&frequency);
+            QueryPerformanceCounter(&t0);
+#else
             clock_gettime(CLOCK_MONOTONIC, &t0);
+#endif
             for (frame = 0u; frame < PERF_WINDOW_FRAMES; frame++)
             {
                 RunMixerFrame();
                 m4aSoundVSync();
             }
+#ifdef _WIN32
+            QueryPerformanceCounter(&t1);
+            /* QPC is monotonic and high-resolution on supported Windows x64. */
+            if (frequency.QuadPart <= 0 || t1.QuadPart < t0.QuadPart)
+                ns = UINT64_MAX;
+            else
+            {
+                uint64_t elapsed = (uint64_t)(t1.QuadPart - t0.QuadPart);
+                uint64_t f = (uint64_t)frequency.QuadPart;
+                ns = (elapsed / f) * 1000000000ull
+                   + ((elapsed % f) * 1000000000ull) / f;
+            }
+#else
             clock_gettime(CLOCK_MONOTONIC, &t1);
             ns = (uint64_t)(t1.tv_sec - t0.tv_sec) * 1000000000ull
                + (uint64_t)(t1.tv_nsec - t0.tv_nsec);
+#endif
             if (ns < best)
                 best = ns;
         }
