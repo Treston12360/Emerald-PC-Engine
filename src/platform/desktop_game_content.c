@@ -261,6 +261,11 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
     char packPath[CONTENT_PATH_MAX];
     struct EmeraldImportSource manifests[EMERALD_IMPORT_MANIFEST_COUNT];
     struct EmeraldImportSource catalogs[EMERALD_IMPORT_CATALOG_COUNT];
+    /* Each import path is owned by the running application, not the shell's
+     * working directory. SDL_GetBasePath resolves beside the executable,
+     * including when Windows starts us from a shortcut or another folder. */
+    char manifestPaths[EMERALD_IMPORT_MANIFEST_COUNT][CONTENT_PATH_MAX];
+    char catalogPaths[EMERALD_IMPORT_CATALOG_COUNT][CONTENT_PATH_MAX];
     struct EmeraldImportInput input;
     struct EmeraldImportReport report;
     enum EmeraldResourceImportError importError;
@@ -289,10 +294,32 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
 
     memset(manifests, 0, sizeof(manifests));
     for (i = 0u; i < EMERALD_IMPORT_MANIFEST_COUNT; i++)
-        manifests[i].path = sImportManifests[i];
+    {
+        if (!Platform_AssetGetPath(sImportManifests[i], manifestPaths[i],
+                                   sizeof(manifestPaths[i])))
+        {
+            info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+            snprintf(info->error, sizeof(info->error),
+                     "Game-data extraction metadata is missing. Reinstall this release.");
+            SetError("%s", info->error);
+            return info->result;
+        }
+        manifests[i].path = manifestPaths[i];
+    }
     memset(catalogs, 0, sizeof(catalogs));
     for (i = 0u; i < EMERALD_IMPORT_CATALOG_COUNT; i++)
-        catalogs[i].path = sImportCatalogs[i];
+    {
+        if (!Platform_AssetGetPath(sImportCatalogs[i], catalogPaths[i],
+                                   sizeof(catalogPaths[i])))
+        {
+            info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+            snprintf(info->error, sizeof(info->error),
+                     "Game-data catalogs are missing. Reinstall this release.");
+            SetError("%s", info->error);
+            return info->result;
+        }
+        catalogs[i].path = catalogPaths[i];
+    }
 
     memset(&input, 0, sizeof(input));
     input.profile = EmeraldRomProfile_Bpee01Rev0();
