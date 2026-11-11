@@ -86,3 +86,40 @@ jobs:
           path: release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
           if-no-files-found: error
           retention-days: 14
+
+
+  windows-smoke:
+    name: Windows x64 loader smoke test (real Windows runner)
+    needs: windows-x64
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Retrieve compiled Windows release ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: vanilla-emerald-windows-x64
+          path: artifact
+      - name: Extract release
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path artifact -Filter '*.zip' | Select-Object -First 1
+          if (-not $zip) { throw "No Windows release ZIP uploaded" }
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath extracted
+          $exe = Get-ChildItem -Path extracted -Recurse -Filter 'pokeemerald-recomp.exe' | Select-Object -First 1
+          if (-not $exe) { throw "No Windows executable in release" }
+          Write-Host "Found executable: $($exe.FullName)"
+      - name: Start executable and verify utility-mode exit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem -Path extracted -Recurse -Filter 'pokeemerald-recomp.exe' | Select-Object -First 1
+          if (-not $exe) { throw "No Windows executable in release" }
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'emerald-smoke-data'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          # This mode initializes SDL and storage, prints a path, and returns 0.
+          # It does not require or distribute a commercial ROM.
+          & $exe.FullName --data-root $dataRoot --print-data-path
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native startup failed with exit code $LASTEXITCODE"
+          }
+          Write-Host 'Windows x64 executable successfully loaded and exited.'
