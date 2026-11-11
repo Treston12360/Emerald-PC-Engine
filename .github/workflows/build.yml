@@ -48,6 +48,7 @@ jobs:
           file pokeemerald-linux64
           readelf -h pokeemerald-linux64 | grep -Eq 'Class:[[:space:]]+ELF64'
           test -s release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
+          python3 tools/windows64/check_import_metadata_archive.py . release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz
           tar -tzf release/pokeemerald-recomp-v0.1.0-alpha-linux-x64.tar.gz | head -30
       - name: Upload Linux package
         uses: actions/upload-artifact@v4
@@ -79,6 +80,7 @@ jobs:
           x86_64-w64-mingw32-objdump -f PokemonEmeraldRecomp.exe | grep -q 'pei-x86-64'
           python3 tools/windows64/verify_pe_layout.py PokemonEmeraldRecomp.exe
           test -s release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
+          python3 tools/windows64/check_import_metadata_archive.py . release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip
           unzip -l release/pokeemerald-recomp-v0.1.0-alpha-windows-x64.zip | tail -20
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
@@ -109,6 +111,11 @@ jobs:
           $exe = Get-ChildItem -Path extracted -Recurse -Filter 'pokeemerald-recomp.exe' | Select-Object -First 1
           if (-not $exe) { throw "No Windows executable in release" }
           Write-Host "Found executable: $($exe.FullName)"
+          $manifest = Join-Path $exe.DirectoryName 'resources/extraction/emerald/bpee01/manifest.production.toml'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            throw "Release is missing the extraction manifest required for ROM import"
+          }
+          Write-Host "Verified bundled ROM-import metadata beside executable"
       - name: Start executable and verify utility-mode exit
         shell: pwsh
         run: |
