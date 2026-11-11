@@ -32,6 +32,12 @@ copy_common_files() {
     install -m 0644 "$readme" "$stage/README.md"
     install -m 0644 "$repo_root/LICENSE" "$stage/LICENSE"
     install -m 0644 "$repo_root/images/rayquaza.png" "$stage/images/rayquaza.png"
+
+    # The launcher imports a locally supplied retail ROM into an .rpack.
+    # Its source-defined manifests/catalogs are public TOML metadata; the old
+    # release omitted them, causing "cannot open extraction manifest (errno 2)".
+    # This never copies ROM bytes, extracted assets, .rpack or user saves.
+    python3 "$repo_root/tools/windows64/package_import_metadata.py" "$repo_root" "$stage"
 }
 
 audit_stage() {
