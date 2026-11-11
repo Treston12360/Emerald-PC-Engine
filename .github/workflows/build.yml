@@ -121,9 +121,7 @@ jobs:
           # It does not require or distribute a commercial ROM.
           # The executable has the Windows GUI subsystem. PowerShell's & operator
           # doesn't reliably wait for GUI processes or set LASTEXITCODE.
-          $process = Start-Process -FilePath $exe.FullName -PassThru \
-            -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden \
-            -ArgumentList @('--data-root', $dataRoot, '--print-data-path')
+          $process = Start-Process -FilePath $exe.FullName -PassThru -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden -ArgumentList @('--data-root', $dataRoot, '--print-data-path')
           if (-not $process.WaitForExit(30000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             throw 'Windows native startup did not exit within 30 seconds'
