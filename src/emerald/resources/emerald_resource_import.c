@@ -1029,6 +1029,7 @@ static enum EmeraldResourceImportError ExtractRecord(
     const uint8_t *romData, size_t romDataSize, const struct EmeraldRomProfile *profile,
     const struct ImportManifestView *manifest, size_t recordIndex,
     const struct ImportCatalogView *catalog,
+    const struct RomSourceIndex *romSources,
     struct Gen3ResourcePackBuild *build,
     struct Gen3ResourcePackDiagnosticList *diag,
     struct EmeraldImportReport *report)
@@ -1098,9 +1099,15 @@ static enum EmeraldResourceImportError ExtractRecord(
          * digests below pin it against the manifest exactly like the ROM
          * slice path pins non-bundle records. */
         size_t artifactSize;
-        enum EmeraldResourceImportError readErr = ReadWholeFile(
-            record->sourceArtifact, &slice, &artifactSize, record->id,
-            EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED, report);
+        enum EmeraldResourceImportError readErr;
+        if (romSources != NULL && romSources->count != 0u)
+            readErr = BuildRomSourcePayload(romSources, record, recordIndex,
+                                            romData, romDataSize, &slice,
+                                            &artifactSize, report);
+        else
+            readErr = ReadWholeFile(record->sourceArtifact, &slice,
+                                    &artifactSize, record->id,
+                                    EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED, report);
         if (readErr != EMERALD_IMPORT_OK)
         {
             free(decoded);
@@ -1346,6 +1353,7 @@ static enum EmeraldResourceImportError BuildPackCore(const struct EmeraldImportI
     struct LoadedBuffer rom;
     struct LoadedBuffer manifest;
     struct LoadedBuffer catalog;
+    struct RomSourceIndex romSources;
     struct ImportManifestView *mergedManifest;
     struct ImportManifestView *parseManifest;
     struct ImportCatalogView *mergedCatalog;
@@ -1369,6 +1377,7 @@ static enum EmeraldResourceImportError BuildPackCore(const struct EmeraldImportI
     memset(&rom, 0, sizeof(rom));
     memset(&manifest, 0, sizeof(manifest));
     memset(&catalog, 0, sizeof(catalog));
+    memset(&romSources, 0, sizeof(romSources));
     catalogObject = NULL;
     parsedPack = NULL;
     build = NULL;
@@ -1438,6 +1447,25 @@ static enum EmeraldResourceImportError BuildPackCore(const struct EmeraldImportI
     err = ValidateRomBytes(rom.data, rom.size, input->profile, report);
     if (err != EMERALD_IMPORT_OK)
         goto done;
+
+    /* A local release supplies numerical provenance, never pre-extracted game
+     * assets. Legacy harnesses without a provenance path continue using
+     * explicit artifact files, preserving existing fixture behavior. */
+    if (input->romProvenancePath != NULL)
+    {
+        err = LoadSlot(NULL, 0, input->romProvenancePath,
+                       "ROM provenance index", false,
+                       EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED,
+                       &romSources.loaded, report);
+        if (err != EMERALD_IMPORT_OK)
+            goto done;
+        if (!ParseRomSourceIndex(&romSources))
+        {
+            err = SetError(report, EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED,
+                           "ROM provenance index is invalid or incomplete");
+            goto done;
+        }
+    }
 
     /* Phase B: every catalog contract, each read, parsed, and profile-checked
      * independently, then merged. Duplicate ids across the merged catalogs are
@@ -1525,7 +1553,7 @@ static enum EmeraldResourceImportError BuildPackCore(const struct EmeraldImportI
     for (i = 0; i < mergedManifest->recordCount; i++)
     {
         err = ExtractRecord(rom.data, rom.size, input->profile, mergedManifest, i,
-                            mergedCatalog, build, &diag, report);
+                            mergedCatalog, &romSources, build, &diag, report);
         if (err != EMERALD_IMPORT_OK)
             goto diag_done;
     }
@@ -1573,6 +1601,8 @@ done:
     LoadedBuffer_Release(&rom);
     LoadedBuffer_Release(&manifest);
     LoadedBuffer_Release(&catalog);
+    free(romSources.entries);
+    LoadedBuffer_Release(&romSources.loaded);
     return err;
 }
 
