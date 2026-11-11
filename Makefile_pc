@@ -532,7 +532,13 @@ $(ELF): $(OBJ_DIR)/ld_script.ld $(OBJS)
 	cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ld_script.ld -o ../../$@ $(OBJS_REL) $(LIB)
 	$(FIX) $@ -t"$(TITLE)" -c$(GAME_CODE) -m$(MAKER_CODE) -r$(REVISION) --silent
 
-$(ROM): $(OBJS) ld_script_native.ld
+ifeq ($(WINDOWS64),1)
+NATIVE_LINK_SCRIPT := ld_script_windows64.ld
+else
+NATIVE_LINK_SCRIPT := ld_script_native.ld
+endif
+
+$(ROM): $(OBJS) $(NATIVE_LINK_SCRIPT)
 ifeq ($(NATIVE_LINUX),1)
 ifeq ($(DINFO),1)
 	# -rdynamic (--export-dynamic) exports the full symtab to .dynsym so
@@ -543,7 +549,7 @@ else
 endif
 else ifeq ($(WINDOWS64),1)
 	$(CC) $(CFLAGS) -mwindows -static-libgcc \
-		-Wl,--demangle,-T,ld_script_native.ld,--image-base,0x00400000,--disable-dynamicbase,--disable-reloc-section \
+		-Wl,--demangle,-T,ld_script_windows64.ld,--image-base,0x00400000,--disable-dynamicbase,--disable-reloc-section \
 		$(OBJS) $(PLATFORM_INCLUDES) -o $@
 else
 	$(CC) $(CFLAGS) -Wl,--demangle $(OBJS) -static-libgcc -L$(SDL_DIR)/lib $(PLATFORM_INCLUDES) -lwinmm -lxinput -o $@
