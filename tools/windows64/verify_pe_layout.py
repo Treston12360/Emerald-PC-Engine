@@ -23,7 +23,7 @@ def verify_pe(path: pathlib.Path) -> None:
     if len(image) < 0x100 or image[:2] != b"MZ":
         raise ValueError("not a DOS/PE executable")
     pe = read_u32(image, 0x3C)
-    if pe + 24 > len(image) or image[pe:pe + 4] != b"PE\\0\\0":
+    if pe + 24 > len(image) or image[pe:pe + 4] != bytes((80, 69, 0, 0)):
         raise ValueError("missing PE signature")
     if read_u16(image, pe + 4) != 0x8664:
         raise ValueError("not a Windows AMD64 executable")
@@ -45,7 +45,7 @@ def verify_pe(path: pathlib.Path) -> None:
     occupied = []
     for i in range(section_count):
         offset = table + i * 40
-        name = image[offset:offset + 8].rstrip(b"\\0").decode("ascii", "replace")
+        name = image[offset:offset + 8].rstrip(bytes((0,))).decode("ascii", "replace")
         virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
             "<IIII", image, offset + 8
         )
