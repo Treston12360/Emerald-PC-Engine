@@ -119,8 +119,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           # This mode initializes SDL and storage, prints a path, and returns 0.
           # It does not require or distribute a commercial ROM.
-          & $exe.FullName --data-root $dataRoot --print-data-path
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windows native startup failed with exit code $LASTEXITCODE"
+          # The executable has the Windows GUI subsystem. PowerShell's & operator
+          # doesn't reliably wait for GUI processes or set LASTEXITCODE.
+          $process = Start-Process -FilePath $exe.FullName -PassThru \
+            -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden \
+            -ArgumentList @('--data-root', $dataRoot, '--print-data-path')
+          if (-not $process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw 'Windows native startup did not exit within 30 seconds'
           }
-          Write-Host 'Windows x64 executable successfully loaded and exited.'
+          if ($process.ExitCode -ne 0) {
+            throw "Windows native startup returned exit code $($process.ExitCode)"
+          }
+          Write-Host 'PASS: Windows x64 executable loaded and cleanly exited.'
