@@ -42,6 +42,50 @@ def checked_segments(segments, size: int, kind: int, path: str):
         raise ValueError(f"{path}: {cursor} reconstructed bytes != {size}")
 
 
+def validate_reference_reconstruction(root: Path, sources: dict) -> None:
+    """Test ALL provenance spans without storing a copyrighted ROM in CI.
+
+    Populate a temporary sparse 16 MiB simulation from known reference
+    artifacts; refuse conflicting ROM offsets. Then rebuild every bundle
+    using precisely the metadata the runtime will receive. All resulting
+    bytes must match the qualified reference artifact byte-for-byte.
+    Neither the simulated ROM nor any game content is written to disk.
+    """
+    virtual_rom = bytearray(ROM_SIZE)
+    assigned = bytearray(ROM_SIZE)
+
+    for path in sorted(sources):
+        kind, spans, payload_size = sources[path]
+        reference = (root / path).read_bytes()
+        if len(reference) != payload_size:
+            raise ValueError(f"{path}: reference length mismatch")
+        for rom_offset, payload_offset, length in spans:
+            piece = reference[payload_offset:payload_offset + length]
+            existing = assigned[rom_offset:rom_offset + length]
+            if 1 in existing:
+                for i, flag in enumerate(existing):
+                    if flag and virtual_rom[rom_offset + i] != piece[i]:
+                        raise ValueError(f"{path}: conflicting qualified ROM provenance")
+            virtual_rom[rom_offset:rom_offset + length] = piece
+            assigned[rom_offset:rom_offset + length] = bytes((1,)) * length
+
+    for path in sorted(sources):
+        kind, spans, payload_size = sources[path]
+        reconstructed = bytearray(payload_size)
+        if kind == 1:
+            head = 8 + 4 * len(spans)
+            struct.pack_into("<II", reconstructed, 0, len(spans), head)
+        for i, (rom_offset, payload_offset, length) in enumerate(spans):
+            if kind == 1:
+                struct.pack_into("<I", reconstructed, 8 + 4 * i, payload_offset)
+            reconstructed[payload_offset:payload_offset + length] = (
+                virtual_rom[rom_offset:rom_offset + length]
+            )
+        if reconstructed != (root / path).read_bytes():
+            raise ValueError(f"{path}: ROM-only reconstruction diverged")
+    print(f"ROM provenance parity: {len(sources)} reference bundles rebuilt exactly")
+
+
 def make_index(root: Path) -> bytes:
     base = root / BASE
     sources = {}
@@ -116,6 +160,7 @@ def make_index(root: Path) -> bytes:
         output += name + bytes((0,))
         for rom_offset, payload_offset, length in spans:
             output += struct.pack("<III", rom_offset, payload_offset, length)
+    validate_reference_reconstruction(root, sources)
     print(f"ROM-only provenance: {len(sources)} bundles, {len(output)} metadata bytes")
     return bytes(output)
 
