@@ -842,6 +842,188 @@ static bool CatalogAddAll(const struct ImportCatalogView *catalog,
     return Gen3ResourceCatalog_Finalize(out, diag);
 }
 
+/* Runtime ROM-provenance index (metadata only, no copied game assets).
+ * The build generates this from the qualified source metadata and ships it
+ * beside the app. On import, all 2,911 constructed bundle payloads are built
+ * from the caller's SHA-1/SHA-256-verified retail ROM. The manifest's own
+ * encoded and canonical SHA-256 hashes remain the final authority.
+ *
+ * Version 1 layout, little-endian:
+ *   "EMRPROV1" + u32 entryCount
+ *   each entry: u16 pathLength, u8 kind, u16 segmentCount, u32 payloadSize,
+ *               path bytes including trailing NUL, segmentCount x
+ *               {u32 romOffset, u32 payloadOffset, u32 length}
+ *   kind 1 (text) additionally synthesizes {u32 count, u32 dataOffset,
+ *               u32 offsets[count]} before the raw ROM label slices.
+ * Entries are strictly ordered by source_artifact path, with no gaps in the
+ * reconstructed payload. No filesystem fallback when this index is active.
+ */
+struct RomSourceEntry
+{
+    const char *path;  /* borrowed from RomSourceIndex.loaded.data */
+    const u8 *segments;
+    u32 payloadSize;
+    u16 segmentCount;
+    u8 kind;
+};
+
+struct RomSourceIndex
+{
+    struct LoadedBuffer loaded;
+    struct RomSourceEntry *entries;
+    size_t count;
+};
+
+static u16 ReadProvU16(const u8 *src)
+{
+    return (u16)src[0] | (u16)((u16)src[1] << 8);
+}
+
+static u32 ReadProvU32(const u8 *src)
+{
+    return (u32)src[0] | ((u32)src[1] << 8) | ((u32)src[2] << 16) | ((u32)src[3] << 24);
+}
+
+static void WriteProvU32(u8 *dst, u32 value)
+{
+    dst[0] = (u8)value;
+    dst[1] = (u8)(value >> 8);
+    dst[2] = (u8)(value >> 16);
+    dst[3] = (u8)(value >> 24);
+}
+
+static bool ParseRomSourceIndex(struct RomSourceIndex *index)
+{
+    const u8 *data = index->loaded.data;
+    size_t length = index->loaded.size;
+    size_t offset = 12;
+    u32 count;
+    size_t i;
+
+    if (length < 12 || memcmp(data, "EMRPROV1", 8) != 0)
+        return false;
+    count = ReadProvU32(data + 8);
+    if (count == 0 || count > 32768)
+        return false;
+    index->entries = calloc((size_t)count, sizeof(*index->entries));
+    if (index->entries == NULL)
+        return false;
+    index->count = count;
+    for (i = 0; i < (size_t)count; i++)
+    {
+        u16 pathLength;
+        u16 segments;
+        size_t segmentBytes;
+        struct RomSourceEntry *entry = &index->entries[i];
+
+        if (offset > length || length - offset < 9)
+            return false;
+        pathLength = ReadProvU16(data + offset);
+        entry->kind = data[offset + 2];
+        segments = ReadProvU16(data + offset + 3);
+        entry->payloadSize = ReadProvU32(data + offset + 5);
+        entry->segmentCount = segments;
+        offset += 9;
+        segmentBytes = (size_t)segments * 12u;
+        if (pathLength == 0 || pathLength >= 1024 || segments == 0
+         || entry->payloadSize == 0 || (entry->kind != 1 && entry->kind != 2)
+         || offset > length || (size_t)pathLength + 1u > length - offset)
+            return false;
+        entry->path = (const char *)(data + offset);
+        if (data[offset + pathLength] != 0
+         || memchr(entry->path, 0, pathLength) != NULL)
+            return false;
+        if (i != 0 && strcmp(index->entries[i - 1].path, entry->path) >= 0)
+            return false;
+        offset += (size_t)pathLength + 1u;
+        if (offset > length || segmentBytes > length - offset)
+            return false;
+        entry->segments = data + offset;
+        offset += segmentBytes;
+    }
+    return offset == length;
+}
+
+static const struct RomSourceEntry *FindRomSource(
+    const struct RomSourceIndex *index, const char *path)
+{
+    size_t lo = 0, hi = index->count;
+    while (lo < hi)
+    {
+        size_t mid = lo + (hi - lo) / 2u;
+        int cmp = strcmp(index->entries[mid].path, path);
+        if (cmp < 0)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    if (lo < index->count && strcmp(index->entries[lo].path, path) == 0)
+        return &index->entries[lo];
+    return NULL;
+}
+
+static enum EmeraldResourceImportError BuildRomSourcePayload(
+    const struct RomSourceIndex *index, const struct ImportManifestRecord *record,
+    size_t recordIndex, const u8 *romData, size_t romSize, u8 **outData,
+    size_t *outSize, struct EmeraldImportReport *report)
+{
+    const struct RomSourceEntry *entry = FindRomSource(index, record->sourceArtifact);
+    size_t cursor;
+    size_t i;
+    u8 *bytes;
+
+    *outData = NULL;
+    *outSize = 0;
+    if (entry == NULL || entry->payloadSize != record->encodedLength
+     || entry->payloadSize != record->decodedLength)
+    {
+        return SetErrorForRecord(report, recordIndex, record->id,
+                                 EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED,
+                                 "ROM provenance index has no matching bundle metadata");
+    }
+    bytes = malloc(entry->payloadSize);
+    if (bytes == NULL)
+        return SetErrorForRecord(report, recordIndex, record->id,
+                                 EMERALD_IMPORT_ERR_OUT_OF_MEMORY,
+                                 "out of memory reconstructing ROM-backed bundle");
+    memset(bytes, 0, entry->payloadSize);
+    cursor = entry->kind == 1 ? 8u + 4u * entry->segmentCount : 0u;
+    if (cursor > entry->payloadSize)
+        goto bad_provenance;
+    if (entry->kind == 1)
+    {
+        WriteProvU32(bytes, entry->segmentCount);
+        WriteProvU32(bytes + 4, (u32)cursor);
+    }
+    for (i = 0; i < entry->segmentCount; i++)
+    {
+        const u8 *segment = entry->segments + i * 12u;
+        u32 romOffset = ReadProvU32(segment);
+        u32 payloadOffset = ReadProvU32(segment + 4);
+        u32 length = ReadProvU32(segment + 8);
+        if ((size_t)romOffset > romSize
+         || length == 0 || (size_t)length > romSize - romOffset
+         || payloadOffset != cursor
+         || length > entry->payloadSize - cursor)
+            goto bad_provenance;
+        if (entry->kind == 1)
+            WriteProvU32(bytes + 8u + i * 4u, payloadOffset);
+        memcpy(bytes + cursor, romData + romOffset, length);
+        cursor += length;
+    }
+    if (cursor != entry->payloadSize)
+        goto bad_provenance;
+    *outData = bytes;
+    *outSize = cursor;
+    return EMERALD_IMPORT_OK;
+
+bad_provenance:
+    free(bytes);
+    return SetErrorForRecord(report, recordIndex, record->id,
+                             EMERALD_IMPORT_ERR_ARTIFACT_READ_FAILED,
+                             "ROM provenance metadata is invalid or outside the ROM");
+}
+
 /* Strictly extract one manifest record and append it to the R2 build. */
 static enum EmeraldResourceImportError ExtractRecord(
     const uint8_t *romData, size_t romDataSize, const struct EmeraldRomProfile *profile,
