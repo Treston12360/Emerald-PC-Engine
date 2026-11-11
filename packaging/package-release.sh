@@ -38,6 +38,11 @@ copy_common_files() {
     # release omitted them, causing "cannot open extraction manifest (errno 2)".
     # This never copies ROM bytes, extracted assets, .rpack or user saves.
     python3 "$repo_root/tools/windows64/package_import_metadata.py" "$repo_root" "$stage"
+
+    # This sidecar contains offsets and lengths only. All GBA text/script/
+    # battle bytes are rebuilt from the player's legally supplied ROM.
+    python3 "$repo_root/tools/windows64/generate_rom_provenance.py" \
+        "$repo_root" "$stage/resources/extraction/emerald/bpee01/rom-provenance.rbi"
 }
 
 audit_stage() {
