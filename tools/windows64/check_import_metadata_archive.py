@@ -12,6 +12,7 @@ from package_import_metadata import SOURCE, metadata_paths
 
 def check(repo: Path, archive: Path) -> None:
     required = {p.as_posix() for p in metadata_paths((repo / SOURCE).read_text(encoding="utf-8"))}
+    required.add("resources/extraction/emerald/bpee01/rom-provenance.rbi")
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as bundle:
             members = [m.filename for m in bundle.infolist() if not m.is_dir()]
