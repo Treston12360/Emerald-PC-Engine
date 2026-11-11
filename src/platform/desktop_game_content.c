@@ -52,6 +52,7 @@
 
 #define EMERALD_PACK_ASSET "games/emerald/base/emerald-bpee01-v1.rpack"
 #define EMERALD_PACK_FILE  "emerald-bpee01-v1.rpack"
+#define EMERALD_ROM_PROVENANCE_ASSET "resources/extraction/emerald/bpee01/rom-provenance.rbi"
 
 /* Canonical R15 resource family inventory; keep synchronized with
  * tools/gen3_resources/pack_build/build_d1_pack.sh. The earlier D1 list
@@ -283,6 +284,7 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
      * including when Windows starts us from a shortcut or another folder. */
     char manifestPaths[EMERALD_IMPORT_MANIFEST_COUNT][CONTENT_PATH_MAX];
     char catalogPaths[EMERALD_IMPORT_CATALOG_COUNT][CONTENT_PATH_MAX];
+    char romProvenancePath[CONTENT_PATH_MAX];
     struct EmeraldImportInput input;
     struct EmeraldImportReport report;
     enum EmeraldResourceImportError importError;
@@ -338,6 +340,16 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
         catalogs[i].path = catalogPaths[i];
     }
 
+    if (!Platform_AssetGetPath(EMERALD_ROM_PROVENANCE_ASSET,
+                               romProvenancePath, sizeof(romProvenancePath)))
+    {
+        info->result = PLATFORM_GAME_CONTENT_IMPORT_INSTALL_FAILED;
+        snprintf(info->error, sizeof(info->error),
+                 "ROM provenance metadata is missing. Reinstall this release.");
+        SetError("%s", info->error);
+        return info->result;
+    }
+
     memset(&input, 0, sizeof(input));
     input.profile = EmeraldRomProfile_Bpee01Rev0();
     input.romPath = romPath;
@@ -345,6 +357,7 @@ enum PlatformGameContentImportResult Platform_GameContentImport(
     input.manifestCount = EMERALD_IMPORT_MANIFEST_COUNT;
     input.catalogs = catalogs;
     input.catalogCount = EMERALD_IMPORT_CATALOG_COUNT;
+    input.romProvenancePath = romProvenancePath;
     input.destinationPath = packPath;
 
     /* Classify a wrong ROM first (the sdl2 CLI prints the detected vs
