@@ -92,7 +92,11 @@ HOST_WIDTH_CFLAGS := -m32
 endif
 
 HOST_64BIT := $(if $(filter 1,$(LINUX64) $(WINDOWS64)),1,0)
-ASFLAGS := $(HOST_ASFLAGS) --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1 --defsym LINUX64=$(HOST_64BIT) --defsym NATIVE_LINUX=$(NATIVE_LINUX)
+# R15's native content layout must be identical for Linux x64 and Windows x64.
+# The historical NATIVE_LINUX assembler flag represents pack-backed content,
+# not POSIX platform APIs. Keep the GBA and Linux 32-bit paths unchanged.
+NATIVE_CONTENT_BUILD := $(if $(filter 1,$(NATIVE_LINUX) $(WINDOWS64)),1,0)
+ASFLAGS := $(HOST_ASFLAGS) --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1 --defsym LINUX64=$(HOST_64BIT) --defsym NATIVE_LINUX=$(NATIVE_CONTENT_BUILD)
 
 ifneq ($(filter 1,$(NATIVE_LINUX) $(WINDOWS64)),)
 CC1 := $(CC)
@@ -251,7 +255,7 @@ C_SRCS := $(foreach src,$(C_SRCS_IN),$(if $(findstring .inc.c,$(src)),,$(src)))
 # migrated leaf symbols and bytes never enter the native object/link graph
 # (see src/data/graphics/trainers_front_payload.c). The GBA Makefile
 # auto-collects them via its own wildcard.
-ifeq ($(NATIVE_LINUX),1)
+ifeq ($(NATIVE_CONTENT_BUILD),1)
 # R13-G5: the script compat seam and its generated inventory are
 # production-linked (the live field-script cutover); the GBA payload
 # objects remain filtered out as before.
@@ -297,7 +301,7 @@ MID_OBJS := $(patsubst $(MID_SUBDIR)/%.mid,$(MID_BUILDDIR)/%.o,$(MID_SRCS))
 # assembly rules in audio_rules.mk still generate the midi-derived objects
 # for them; for the linux64 link these lists are simply empty, so no rule
 # fires and no payload object is linked.
-ifeq ($(NATIVE_LINUX)-$(LINUX64),1-1)
+ifeq ($(NATIVE_CONTENT_BUILD)-$(HOST_64BIT),1-1)
 SONG_OBJS :=
 MID_OBJS :=
 
