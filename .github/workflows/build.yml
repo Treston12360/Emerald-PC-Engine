@@ -115,7 +115,16 @@ jobs:
           if (-not (Test-Path -LiteralPath $manifest)) {
             throw "Release is missing the extraction manifest required for ROM import"
           }
-          Write-Host "Verified bundled ROM-import metadata beside executable"
+          $provenance = Join-Path $exe.DirectoryName 'resources/extraction/emerald/bpee01/rom-provenance.rbi'
+          if (-not (Test-Path -LiteralPath $provenance)) {
+            throw "Release is missing ROM-only bundle provenance required for import"
+          }
+          $provenanceBytes = [System.IO.File]::ReadAllBytes($provenance)
+          if ($provenanceBytes.Length -lt 12 -or
+              [Text.Encoding]::ASCII.GetString($provenanceBytes, 0, 8) -ne 'EMRPROV1') {
+            throw "ROM provenance index is missing its expected version signature"
+          }
+          Write-Host "Verified bundled ROM-import metadata and provenance beside executable"
       - name: Start executable and verify utility-mode exit
         shell: pwsh
         run: |
